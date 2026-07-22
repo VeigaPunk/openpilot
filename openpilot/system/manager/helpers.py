@@ -13,6 +13,12 @@ from openpilot.common.basedir import BASEDIR
 from openpilot.common.params import Params
 
 def unblock_stdout() -> None:
+  # forkpty is unsafe on macOS once multi-threaded / Cocoa paths are involved
+  # (MetaDrive/Panda3D). Skipping keeps manager alive and lets the sim subprocess
+  # initialize Cocoa cleanly. Linux behavior is unchanged.
+  if sys.platform == "darwin":
+    return
+
   # get a non-blocking stdout
   child_pid, child_pty = os.forkpty()
   if child_pid != 0:  # parent
