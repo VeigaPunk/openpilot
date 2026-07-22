@@ -1,1 +1,1 @@
-probe from xbgst 2026-07-22
+marker 20260722T140215Z
