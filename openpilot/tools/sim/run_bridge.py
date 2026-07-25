@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import argparse
+import sys
 
 from typing import Any
 from multiprocessing import Queue
@@ -24,7 +25,13 @@ def parse_args(add_args=None):
   parser.add_argument('--high_quality', action='store_true')
   parser.add_argument('--dual_camera', action='store_true')
 
-  return parser.parse_args(add_args)
+  args = parser.parse_args(add_args)
+
+  # joystick input reads Linux's /dev/input via evdev; fail before spawning any processes
+  if args.joystick and sys.platform != "linux":
+    parser.error("--joystick is only supported on Linux (/dev/input); use the keyboard controls on other platforms")
+
+  return args
 
 if __name__ == "__main__":
   args = parse_args()

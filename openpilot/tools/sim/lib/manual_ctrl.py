@@ -8,11 +8,14 @@ from typing import NoReturn
 
 from openpilot.tools.sim.bridge.common import control_cmd_gen
 
-# Iterate over the joystick devices.
+# Iterate over the joystick devices. /dev/input is Linux-only.
 print('Available devices:')
-for fn in os.listdir('/dev/input'):
-  if fn.startswith('js'):
-    print(f'  /dev/input/{fn}')
+try:
+  for fn in os.listdir('/dev/input'):
+    if fn.startswith('js'):
+      print(f'  /dev/input/{fn}')
+except FileNotFoundError:
+  print('  (no /dev/input: joystick input is only supported on Linux)')
 
 # We'll store the states here.
 axis_states: dict[str, float] = {}
