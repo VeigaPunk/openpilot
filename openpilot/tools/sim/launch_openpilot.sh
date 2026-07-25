@@ -7,6 +7,10 @@ export SKIP_FW_QUERY="1"
 export FINGERPRINT="HONDA_CIVIC_2022"
 
 export BLOCK="${BLOCK},camerad,loggerd,encoderd,micd,logmessaged,manage_athenad"
+if [[ "$SIM_LOGS" ]]; then
+  # keep loggerd+encoderd running so rlog/qlog/fcamera are written in the sim
+  export BLOCK="${BLOCK//,loggerd,encoderd/}"
+fi
 if [[ "$CI" ]]; then
   # TODO: offscreen UI should work
   export BLOCK="${BLOCK},ui"
