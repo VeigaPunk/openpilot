@@ -1,4 +1,5 @@
 import math
+import os
 import time
 import numpy as np
 
@@ -27,9 +28,9 @@ def apply_metadrive_patches(arrive_dest_done=True):
   # By default, metadrive won't try to use cuda images unless it's used as a sensor for vehicles, so patch that in
   def add_image_sensor_patched(self, name: str, cls, args):
     if self.global_config["image_on_cuda"]:# and name == self.global_config["vehicle_config"]["image_source"]:
-        sensor = cls(*args, self, cuda=True)
+      sensor = cls(*args, self, cuda=True)
     else:
-        sensor = cls(*args, self, cuda=False)
+      sensor = cls(*args, self, cuda=False)
     assert isinstance(sensor, ImageBuffer), "This API is for adding image sensor"
     self.sensors[name] = sensor
 
@@ -51,6 +52,9 @@ def apply_metadrive_patches(arrive_dest_done=True):
 def metadrive_process(dual_camera: bool, config: dict, camera_array, wide_camera_array, image_lock,
                       controls_recv: Connection, simulation_state_send: Connection, vehicle_state_send: Connection,
                       exit_event, op_engaged, test_duration, test_run):
+  from openpilot.tools.sim.bridge.metadrive.ci_render_patches import apply_ci_render_patches
+  apply_ci_render_patches()
+
   arrive_dest_done = config.pop("arrive_dest_done", True)
   apply_metadrive_patches(arrive_dest_done)
 
@@ -91,6 +95,9 @@ def metadrive_process(dual_camera: bool, config: dict, camera_array, wide_camera
     img = cam.perceive(to_float=False)
     if not isinstance(img, np.ndarray):
       img = img.get() # convert cupy array to numpy
+    if img.shape[0] != H or img.shape[1] != W:
+      # nearest-neighbor upscale when CI render scale < 1
+      img = img.repeat(H // img.shape[0], axis=0).repeat(W // img.shape[1], axis=1)
     return img
 
   rk = Ratekeeper(100, None)
