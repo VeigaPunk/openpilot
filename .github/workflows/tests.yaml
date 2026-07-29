@@ -6,6 +6,10 @@ on:
       - master
   pull_request:
   workflow_dispatch:
+    inputs:
+      soak:
+        description: "run 20x reliability soak"
+        default: "0"
   workflow_call:
     inputs:
       run_number:
@@ -184,26 +188,97 @@ jobs:
         ONNXCPU: 1
       run: $PYTEST openpilot/selfdrive/test/process_replay/test_regen.py
 
-  simulator_driving:
-    name: simulator driving
-    runs-on: ${{
-      (github.repository == 'commaai/openpilot') &&
-      ((github.event_name != 'pull_request') ||
-      (github.event.pull_request.head.repo.full_name == 'commaai/openpilot'))
-      && fromJSON('["namespace-profile-amd64-8x16"]')
-      || fromJSON('["ubuntu-24.04"]') }}
-    if: false  # FIXME: Started to timeout recently
+  simulator:
+    name: simulator
+    # Bounty requires free OSS runners -> pin ubuntu-24.04 unconditionally (no namespace routing)
+    runs-on: ubuntu-24.04
     steps:
     - uses: actions/checkout@v7
+      with:
+        submodules: true
     - run: ./tools/op.sh setup
+    - name: Install MetaDrive (pinned)
+      uses: nick-fields/retry@ad984534de44a9489a53aefd81eb77f87c70dc60
+      with:
+        timeout_minutes: 5
+        max_attempts: 3
+        # CWD is the repo root, so uv installs into ./.venv created by op.sh setup
+        command: uv pip install "metadrive-simulator @ git+https://github.com/commaai/metadrive.git@2716f55a9c7b928ce957a497a15c2c19840c08bc"
+    - name: Verify MetaDrive import (guard against vacuous test skip)
+      run: python3 -c "from openpilot.tools.sim.bridge.metadrive.metadrive_bridge import MetaDriveBridge"
     - name: Build openpilot
       run: scons
     - name: Driving test
-      timeout-minutes: 2
+      timeout-minutes: 12
       env:
-        # MetaDrive renders offscreen through panda3d's EGL pipe on llvmpipe
+        CI: 1
+        # MetaDrive renders offscreen through panda3d's EGL pipe on llvmpipe (software GL, no X server)
         EGL_PLATFORM: surfaceless
-      run: pytest -s openpilot/tools/sim/tests/test_metadrive_bridge.py
+        # send route logs somewhere we can upload from
+        LOG_ROOT: ${{ github.workspace }}/sim_logs
+        # 60s of driving to satisfy the "1m driving" requirement; test is real-time paced by Ratekeeper(100)
+        SIM_TEST_DURATION: 60
+        # keep loggerd+encoderd running in the sim so rlog/qlog/fcamera are written
+        SIM_LOGS: 1
+      run: |
+        mkdir -p "$LOG_ROOT"
+        # -o addopts="" : repo pyproject addopts targets xdist-parallel full-suite runs; here we want one serial test
+        pytest -s -o addopts="" -rA openpilot/tools/sim/tests/test_metadrive_bridge.py
+    - name: Upload sim logs
+      uses: actions/upload-artifact@v7
+      if: always()
+      continue-on-error: true
+      with:
+        name: metadrive-sim-logs-${{ github.run_number }}-${{ github.event_name == 'push' && 'master' || github.event.number || 'run' }}
+        path: |
+          ${{ github.workspace }}/sim_logs
+          ~/.comma/log
+        if-no-files-found: warn
+        retention-days: 14
+
+  # Reliability soak: NOT part of the PR gate. Run via workflow_dispatch to prove 20/20.
+  simulator_soak:
+    name: simulator soak
+    if: inputs.soak == '1'
+    strategy:
+      fail-fast: false
+      matrix:
+        run: [1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20]
+    runs-on: ubuntu-24.04
+    steps:
+    # identical steps to `simulator` job; isolated per-run via OPENPILOT_PREFIX
+    - uses: actions/checkout@v7
+      with:
+        submodules: true
+    - run: ./tools/op.sh setup
+    - name: Install MetaDrive (pinned)
+      uses: nick-fields/retry@ad984534de44a9489a53aefd81eb77f87c70dc60
+      with:
+        timeout_minutes: 5
+        max_attempts: 3
+        command: uv pip install "metadrive-simulator @ git+https://github.com/commaai/metadrive.git@2716f55a9c7b928ce957a497a15c2c19840c08bc"
+    - name: Verify MetaDrive import (guard against vacuous test skip)
+      run: python3 -c "from openpilot.tools.sim.bridge.metadrive.metadrive_bridge import MetaDriveBridge"
+    - run: scons
+    - name: Driving test
+      timeout-minutes: 12
+      env:
+        CI: 1
+        EGL_PLATFORM: surfaceless
+        LOG_ROOT: ${{ github.workspace }}/sim_logs
+        SIM_TEST_DURATION: 60
+        SIM_LOGS: 1
+        OPENPILOT_PREFIX: _soak${{ matrix.run }}
+      run: |
+        mkdir -p "$LOG_ROOT"
+        # -o addopts="" : repo pyproject addopts targets xdist-parallel full-suite runs; here we want one serial test
+        pytest -s -o addopts="" -rA openpilot/tools/sim/tests/test_metadrive_bridge.py
+    - uses: actions/upload-artifact@v7
+      if: always()
+      continue-on-error: true
+      with:
+        name: metadrive-soak-${{ github.run_number }}-${{ matrix.run }}
+        path: ${{ github.workspace }}/sim_logs
 
   create_ui_report:
     name: Create UI Report
